@@ -82,7 +82,10 @@ async function executePrintJob(
       });
 
       inputStream.on("end", () => {
-        socket.end();
+        // Envia o caractere Form Feed (0x0C) para forçar o descarregamento do buffer de impressão imediatamente
+        socket.write(Buffer.from([0x0c]), () => {
+          socket.end();
+        });
       });
 
       socket.on("finish", () => {
