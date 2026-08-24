@@ -1,58 +1,104 @@
-import fs from "fs";
 import net from "net";
 import axios from "axios";
+import { Readable } from "stream";
+import fs from "fs";
+
+// Fila por IP de impressora para evitar conexões concorrentes no mesmo IP
+const printerQueues: Map<string, Promise<void>> = new Map();
 
 export async function sendToPrinter(
   fileUrl: string,
-  printerIp: string
+  printerIp: string,
+  timeoutMs: number = 10000
 ): Promise<{ success: boolean; error?: string }> {
-  let tempFile = fileUrl; // Pode ser tanto caminho local quanto URL remota
+  // Enfileira a impressão para a impressora específica para garantir ordem FIFO e evitar colisão de socket
+  const previousTask = printerQueues.get(printerIp) || Promise.resolve();
+
+  let resolveTask: () => void;
+  const currentTask = new Promise<void>((resolve) => {
+    resolveTask = resolve;
+  });
+
+  // Atualiza a fila da impressora
+  printerQueues.set(
+    printerIp,
+    previousTask.then(() => currentTask).catch(() => currentTask)
+  );
+
+  await previousTask;
 
   try {
-    // 🧠 1️⃣ Verifica se o parâmetro é uma URL (http ou https)
+    const result = await executePrintJob(fileUrl, printerIp, timeoutMs);
+    return result;
+  } finally {
+    resolveTask!();
+    // Limpa a fila se não houver mais tarefas pendentes
+    if (printerQueues.get(printerIp) === currentTask) {
+      printerQueues.delete(printerIp);
+    }
+  }
+}
+
+async function executePrintJob(
+  fileUrl: string,
+  printerIp: string,
+  timeoutMs: number
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    let inputStream: Readable;
+
+    // 1️⃣ Obter o stream de dados (Stream HTTP remoto ou arquivo local)
     if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) {
-      console.log(`🌐 Baixando PDF da URL: ${fileUrl}`);
-      const response = await axios.get(fileUrl, { responseType: "arraybuffer" });
-
-      // Cria pasta temporária, se não existir
-      fs.mkdirSync("./tmp", { recursive: true });
-
-      // Salva o arquivo temporário
-      tempFile = `./tmp/print-${Date.now()}.pdf`;
-      fs.writeFileSync(tempFile, response.data);
-      console.log(`📥 PDF salvo temporariamente em: ${tempFile}`);
+      console.log(`🌐 Baixando PDF via Stream: ${fileUrl}`);
+      const response = await axios.get(fileUrl, {
+        responseType: "stream",
+        timeout: timeoutMs,
+      });
+      inputStream = response.data;
     } else {
-      // 📂 Caso seja caminho local, verifica se o arquivo existe
       if (!fs.existsSync(fileUrl)) {
         throw new Error(`Arquivo local não encontrado: ${fileUrl}`);
       }
-      console.log(`📄 Usando arquivo local: ${fileUrl}`);
+      inputStream = fs.createReadStream(fileUrl);
     }
 
-    // 🖨️ 2️⃣ Conecta na impressora via socket (porta 9100)
+    // 2️⃣ Enviar via Socket TCP diretamente com otimizaciones de rede
     await new Promise<void>((resolve, reject) => {
       const socket = new net.Socket();
-      const fileStream = fs.createReadStream(tempFile);
+
+      // Desativa o algoritmo de Nagle para transmissão imediata dos pacotes
+      socket.setNoDelay(true);
+
+      // Define timeout de conexão e transmissão
+      socket.setTimeout(timeoutMs, () => {
+        socket.destroy(
+          new Error(`Timeout de comunicação (${timeoutMs}ms) com a impressora ${printerIp}`)
+        );
+      });
 
       socket.connect(9100, printerIp, () => {
         console.log(`📡 Conectado à impressora ${printerIp}`);
-        fileStream.pipe(socket);
+        inputStream.pipe(socket);
       });
 
-      fileStream.on("end", () => {
+      inputStream.on("end", () => {
         socket.end();
-        console.log("✅ Impressão concluída e conexão encerrada");
-        resolve();
       });
 
-      socket.on("error", (err) => reject(err));
-    });
+      socket.on("close", (hadError) => {
+        if (!hadError) {
+          console.log("✅ Impressão enviada com sucesso");
+          resolve();
+        } else {
+          reject(new Error("Conexão com a impressora foi encerrada com erro."));
+        }
+      });
 
-    // 🧹 3️⃣ Remove o arquivo temporário se for URL remota
-    if (fileUrl.startsWith("http") && fs.existsSync(tempFile)) {
-      fs.unlinkSync(tempFile);
-      console.log("🧽 Arquivo temporário removido");
-    }
+      socket.on("error", (err) => {
+        socket.destroy();
+        reject(err);
+      });
+    });
 
     return { success: true };
   } catch (error: any) {
@@ -60,3 +106,4 @@ export async function sendToPrinter(
     return { success: false, error: error.message };
   }
 }
+
