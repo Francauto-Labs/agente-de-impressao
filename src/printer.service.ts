@@ -85,11 +85,15 @@ async function executePrintJob(
         socket.end();
       });
 
+      socket.on("finish", () => {
+        console.log("✅ Dados totalmente transmitidos para o socket");
+        // Força o fechamento da conexão TCP no Linux para a impressora não ficar aguardando no estado "Recebendo dados..."
+        socket.destroy();
+        resolve();
+      });
+
       socket.on("close", (hadError) => {
-        if (!hadError) {
-          console.log("✅ Impressão enviada com sucesso");
-          resolve();
-        } else {
+        if (hadError) {
           reject(new Error("Conexão com a impressora foi encerrada com erro."));
         }
       });

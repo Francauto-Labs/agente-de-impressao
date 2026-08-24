@@ -3,12 +3,12 @@ version: '3.8'
 services:
   agente-impressao:
     build:
-      context: https://github.com/francauto/agente-de-impressao.git
+      context: .
       dockerfile: Dockerfile
     container_name: agente-impressao
-    ports:
-      - "${PORT:-4005}:${PORT:-4005}"
+    network_mode: "host" # Usa a pilha de rede direta do Linux (elimina ponte NAT do Docker)
     restart: unless-stopped
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=${PORT:-4005}
+
