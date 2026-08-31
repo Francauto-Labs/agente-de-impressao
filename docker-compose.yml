@@ -11,4 +11,9 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=${PORT:-4005}
-
+      - PRINT_MODE=${PRINT_MODE:-pcl}
+      - PRINT_COLOR=${PRINT_COLOR:-false}
+      - GHOSTSCRIPT_BIN=${GHOSTSCRIPT_BIN:-gs}
+      - SMB_USER=${SMB_USER:-}
+      - SMB_PASSWORD=${SMB_PASSWORD:-}
+      - SMB_DOMAIN=${SMB_DOMAIN:-}

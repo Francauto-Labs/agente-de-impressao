@@ -1,36 +1,34 @@
-# Build stage
+# ============================ Build stage ============================
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
+# Instala TODAS as dependências (inclui devDependencies: typescript, @types...)
 COPY package*.json ./
-
-# Install dependencies
 RUN npm ci
 
-# Copy source code
+# Compila o TypeScript
 COPY . .
-
-# Build TypeScript
 RUN npm run build
 
-# Production stage
+# ============================ Production stage ============================
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files
+# Binários necessários em runtime:
+#   ghostscript        -> converte PDF em PCL/PS (elimina o erro de PDF Direct Print)
+#   ghostscript-fonts  -> fontes para o Ghostscript renderizar texto
+#   samba-client       -> comando smbclient (impressão em filas \\host\fila do Windows)
+RUN apk add --no-cache ghostscript ghostscript-fonts samba-client
+
+# Só dependências de produção
 COPY package*.json ./
+RUN npm ci --omit=dev
 
-# Install only production dependencies
-RUN npm ci --only=production
-
-# Copy built files from builder stage
+# Artefato compilado
 COPY --from=builder /app/dist ./dist
 
-# Expose port
 EXPOSE 4005
 
-# Start application
 CMD ["npm", "start"]
